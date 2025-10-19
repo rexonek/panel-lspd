@@ -757,57 +757,241 @@ app.use((err, req, res, next) => {
 });
 // ============================================
 // DODAJ TO NA KOŃCU server.js (PRZED app.listen)
-// SUPER PROSTY SETUP - Usuń po użyciu!
+// AUTO SETUP - Tworzy bazę + admina automatycznie
 // ============================================
 
-app.get('/api/setup-admin-now', async (req, res) => {
+app.get('/api/auto-setup', async (req, res) => {
+  const setupLog = [];
+  
   try {
-    // Sprawdź czy admin już istnieje
-    const [existing] = await pool.query('SELECT id FROM users WHERE username = ?', ['admin']);
+    setupLog.push('🚀 Starting auto setup...');
+
+    // ============================================
+    // KROK 1: Usuń stare tabele jeśli istnieją
+    // ============================================
+    setupLog.push('🗑️ Dropping old tables...');
+    await pool.query('DROP TABLE IF EXISTS promotions');
+    await pool.query('DROP TABLE IF EXISTS badges');
+    await pool.query('DROP TABLE IF EXISTS members');
+    await pool.query('DROP TABLE IF EXISTS users');
+    await pool.query('DROP TABLE IF EXISTS ranks');
+
+    // ============================================
+    // KROK 2: Utwórz tabele
+    // ============================================
+    setupLog.push('📊 Creating tables...');
+
+    // Tabela ranks
+    await pool.query(`
+      CREATE TABLE ranks (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        rank_name VARCHAR(100) NOT NULL UNIQUE,
+        badge_min INT NULL,
+        badge_max INT NULL,
+        max_slots INT NULL,
+        priority INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Tabela members
+    await pool.query(`
+      CREATE TABLE members (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        character_name VARCHAR(255) NOT NULL,
+        discord_id VARCHAR(50) UNIQUE,
+        rank_id INT NOT NULL,
+        badge_number INT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (rank_id) REFERENCES ranks(id),
+        INDEX idx_discord (discord_id),
+        INDEX idx_rank (rank_id),
+        INDEX idx_badge (badge_number)
+      )
+    `);
+
+    // Tabela badges
+    await pool.query(`
+      CREATE TABLE badges (
+        badge_number INT PRIMARY KEY,
+        rank_id INT NOT NULL,
+        assigned_to INT NULL,
+        assigned_at TIMESTAMP NULL,
+        assigned_by INT NULL,
+        released_at TIMESTAMP NULL,
+        FOREIGN KEY (rank_id) REFERENCES ranks(id),
+        FOREIGN KEY (assigned_to) REFERENCES members(id) ON DELETE SET NULL,
+        INDEX idx_rank_assigned (rank_id, assigned_to)
+      )
+    `);
+
+    // Tabela promotions
+    await pool.query(`
+      CREATE TABLE promotions (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        member_id INT NOT NULL,
+        from_rank_id INT NOT NULL,
+        to_rank_id INT NOT NULL,
+        old_badge INT NULL,
+        new_badge INT NULL,
+        changed_by INT NULL,
+        changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        note TEXT,
+        FOREIGN KEY (member_id) REFERENCES members(id),
+        FOREIGN KEY (from_rank_id) REFERENCES ranks(id),
+        FOREIGN KEY (to_rank_id) REFERENCES ranks(id),
+        INDEX idx_member (member_id)
+      )
+    `);
+
+    // Tabela users
+    await pool.query(`
+      CREATE TABLE users (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        username VARCHAR(100) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        role ENUM('admin', 'moderator', 'viewer') DEFAULT 'viewer',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    setupLog.push('✅ Tables created');
+
+    // ============================================
+    // KROK 3: Dodaj rangi
+    // ============================================
+    setupLog.push('👮 Adding ranks...');
     
-    if (existing.length > 0) {
-      return res.json({
-        success: false,
-        message: '⚠️ Admin już istnieje! Możesz się zalogować.',
-        credentials: {
-          username: 'admin',
-          password: 'admin123'
-        }
-      });
+    const ranks = [
+      ['00A Opiekun Frakcji', null, null, null, 1],
+      ['00 Director Of Police', null, null, null, 2],
+      ['01 Chief of Police', null, null, null, 3],
+      ['02 Deputy Chief Of Police', null, null, null, 4],
+      ['03 Assistant Chief of Police', null, null, null, 5],
+      ['04 Commander of Police', null, null, null, 6],
+      ['05 Deputy Commander of Police', null, null, null, 7],
+      ['Division Captain', 6, 7, 2, 8],
+      ['Captain II', 8, 15, 8, 9],
+      ['Captain I', 16, 25, 10, 10],
+      ['Staff Lieutenant', 26, 40, 15, 11],
+      ['Senior Lieutenant', 41, 55, 15, 12],
+      ['Lieutenant II', 56, 75, 20, 13],
+      ['Lieutenant I', 76, 95, 20, 14],
+      ['Sergeant III', 96, 120, 25, 15],
+      ['Sergeant II', 121, 150, 30, 16],
+      ['Sergeant I', 151, 190, 40, 17],
+      ['Officer III', 191, 240, 50, 18],
+      ['Officer II', 241, 300, 60, 19],
+      ['Officer I', 301, 380, 80, 20],
+      ['Cadet', 381, 500, 120, 21]
+    ];
+
+    for (const rank of ranks) {
+      await pool.query(
+        'INSERT INTO ranks (rank_name, badge_min, badge_max, max_slots, priority) VALUES (?, ?, ?, ?, ?)',
+        rank
+      );
     }
 
-    // Hash hasła
-    const passwordHash = await bcrypt.hash('admin123', 10);
+    setupLog.push(`✅ Added ${ranks.length} ranks`);
 
-    // Dodaj użytkownika
-    const [result] = await pool.query(
+    // ============================================
+    // KROK 4: Dodaj przykładowych członków
+    // ============================================
+    setupLog.push('👥 Adding sample members...');
+    
+    const members = [
+      ['John Smith', 'DC001', 2, null],
+      ['David Williams', 'DC002', 8, 6],
+      ['Emily Davis', 'DC003', 9, 8],
+      ['Matthew Martin', 'DC004', 18, 191],
+      ['Lisa Rodriguez', 'DC005', 21, 381]
+    ];
+
+    for (const member of members) {
+      await pool.query(
+        'INSERT INTO members (character_name, discord_id, rank_id, badge_number) VALUES (?, ?, ?, ?)',
+        member
+      );
+    }
+
+    setupLog.push(`✅ Added ${members.length} sample members`);
+
+    // ============================================
+    // KROK 5: Dodaj odznaki (tylko kilka dla testu)
+    // ============================================
+    setupLog.push('🎖️ Adding badges...');
+    
+    const badgeRanges = [
+      [8, 6, 7],    // Division Captain
+      [9, 8, 15],   // Captain II
+      [18, 191, 200], // Officer III (tylko część)
+      [21, 381, 400]  // Cadet (tylko część)
+    ];
+
+    let badgeCount = 0;
+    for (const [rankId, min, max] of badgeRanges) {
+      for (let badge = min; badge <= max; badge++) {
+        await pool.query(
+          'INSERT INTO badges (badge_number, rank_id) VALUES (?, ?)',
+          [badge, rankId]
+        );
+        badgeCount++;
+      }
+    }
+
+    setupLog.push(`✅ Added ${badgeCount} badges`);
+
+    // ============================================
+    // KROK 6: Utwórz konto admin
+    // ============================================
+    setupLog.push('🔐 Creating admin account...');
+    
+    const passwordHash = await bcrypt.hash('admin123', 10);
+    await pool.query(
       'INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)',
       ['admin', passwordHash, 'admin']
     );
 
+    setupLog.push('✅ Admin account created');
+
+    // ============================================
+    // KONIEC
+    // ============================================
+    setupLog.push('🎉 Setup completed successfully!');
+
     res.json({
       success: true,
-      message: '✅ Konto admin utworzone!',
+      message: '✅ Baza danych skonfigurowana!',
       credentials: {
         username: 'admin',
         password: 'admin123'
       },
-      note: '⚠️ USUŃ ten endpoint z server.js po setupie!',
-      nextStep: 'Teraz możesz się zalogować w panelu'
+      stats: {
+        ranks: ranks.length,
+        members: members.length,
+        badges: badgeCount
+      },
+      log: setupLog,
+      warning: '⚠️ USUŃ endpoint /api/auto-setup z server.js!',
+      nextStep: 'Możesz się teraz zalogować w panelu LSPD'
     });
 
   } catch (error) {
-    console.error('Setup error:', error);
-    res.json({
+    setupLog.push(`❌ Error: ${error.message}`);
+    
+    res.status(500).json({
       success: false,
       error: error.message,
-      hint: 'Sprawdź czy tabela users istnieje w bazie (uruchom schema.sql)'
+      log: setupLog,
+      hint: 'Sprawdź logi Railway i upewnij się że MySQL działa'
     });
   }
 });
 
 // ============================================
-// Po użyciu USUŃ ten endpoint!
+// USUŃ ten endpoint po setupie!
 // ============================================
 // ============================================
 // START SERVER
