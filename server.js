@@ -757,56 +757,58 @@ app.use((err, req, res, next) => {
 });
 // ============================================
 // DODAJ TO NA KOŃCU server.js (PRZED app.listen)
+// SUPER PROSTY SETUP - Usuń po użyciu!
 // ============================================
 
-// SETUP ENDPOINT - Utwórz pierwszego admina (usuń po użyciu!)
-app.get('/api/setup/create-admin', async (req, res) => {
+app.get('/api/setup-admin-now', async (req, res) => {
   try {
-    const { username, password, secretKey } = req.query;
-    
-    // Proste zabezpieczenie - usuń po setupie!
-    if (secretKey !== 'LSPD-SETUP-2024') {
-      return res.status(403).json({ error: 'Invalid secret key' });
-    }
-
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password required' });
-    }
-
     // Sprawdź czy admin już istnieje
-    const [existing] = await pool.query(
-      'SELECT id FROM users WHERE username = ?',
-      [username]
-    );
-
+    const [existing] = await pool.query('SELECT id FROM users WHERE username = ?', ['admin']);
+    
     if (existing.length > 0) {
-      return res.status(409).json({ error: 'User already exists' });
+      return res.json({
+        success: false,
+        message: '⚠️ Admin już istnieje! Możesz się zalogować.',
+        credentials: {
+          username: 'admin',
+          password: 'admin123'
+        }
+      });
     }
 
     // Hash hasła
-    const bcrypt = require('bcrypt');
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash('admin123', 10);
 
     // Dodaj użytkownika
-    await pool.query(
+    const [result] = await pool.query(
       'INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)',
-      [username, passwordHash, 'admin']
+      ['admin', passwordHash, 'admin']
     );
 
     res.json({
       success: true,
-      message: 'Admin user created successfully!',
-      username: username,
-      note: 'IMPORTANT: Remove this endpoint from server.js after setup!'
+      message: '✅ Konto admin utworzone!',
+      credentials: {
+        username: 'admin',
+        password: 'admin123'
+      },
+      note: '⚠️ USUŃ ten endpoint z server.js po setupie!',
+      nextStep: 'Teraz możesz się zalogować w panelu'
     });
 
   } catch (error) {
-    console.error('Setup admin error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Setup error:', error);
+    res.json({
+      success: false,
+      error: error.message,
+      hint: 'Sprawdź czy tabela users istnieje w bazie (uruchom schema.sql)'
+    });
   }
 });
 
-// ⚠️ UWAGA: Usuń ten endpoint po utworzeniu admina!
+// ============================================
+// Po użyciu USUŃ ten endpoint!
+// ============================================
 // ============================================
 // START SERVER
 // ============================================
