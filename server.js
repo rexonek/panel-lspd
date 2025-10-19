@@ -760,9 +760,9 @@ app.use((err, req, res, next) => {
 // ============================================
 
 // SETUP ENDPOINT - Utwórz pierwszego admina (usuń po użyciu!)
-app.post('/api/setup/create-admin', async (req, res) => {
+app.get('/api/setup/create-admin', async (req, res) => {
   try {
-    const { username, password, secretKey } = req.body;
+    const { username, password, secretKey } = req.query;
     
     // Proste zabezpieczenie - usuń po setupie!
     if (secretKey !== 'LSPD-SETUP-2024') {
